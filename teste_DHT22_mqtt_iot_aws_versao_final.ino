@@ -13,7 +13,7 @@
 
 #include "config.h"
 
-#define DHTPIN 4          // Digital pin connected to the DHT sensor
+#define DHTPIN 23          // Digital pin connected to the DHT sensor
 #define RELAYPIN 16       // relais forte
 #define RELAYTOTALPIN 17  // relais total
 
