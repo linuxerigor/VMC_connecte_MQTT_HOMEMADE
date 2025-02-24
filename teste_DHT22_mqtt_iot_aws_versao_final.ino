@@ -10,10 +10,13 @@
 #include <NTPClient.h>    // Biblioteca para sincronizar horário
 #include <WiFiUdp.h>      // Biblioteca para UDP
 #include <vector>         // Para vetor dinâmico
+#include <ArduinoOTA.h>
+
 
 #include "config.h"
 
 #define DHTPIN 23          // Digital pin connected to the DHT sensor
+#define DHTPINP 14          // Digital pin connected to the DHT sensor
 #define RELAYPIN 16       // relais forte
 #define RELAYTOTALPIN 17  // relais total
 
@@ -44,6 +47,7 @@ DHT dht(DHTPIN, DHTTYPE);
 
 unsigned long tempoAnteriormqtt = 0;  // Variável para armazenar o último tempo registrado
 unsigned long intervalomqtt = 30000;  // Intervalo de 1 segundo (1000 milissegundos) send MQTT
+unsigned long tempoAnteriorreadDHT22 = 0;
 
 int ativar = 0;
 int ativarauto = 0;
@@ -64,6 +68,7 @@ PubSubClient mqttClient(espClientForMQTT);
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", 3600, 60000);  // 3600 = UTC+1
 int timeZone = 1; // Configuração do fuso horário
+
 
 void ligadoturbo(int on) {
   ativar = on;
@@ -196,9 +201,12 @@ void setup() {
 
   pinMode(RELAYPIN, OUTPUT);       // définit la broche du relais en sortie
   pinMode(RELAYTOTALPIN, OUTPUT);  // définit la broche du relais en sortie
-
+  
   digitalWrite(RELAYPIN, 0);       // 0 = rele desligado, turbo desligado
   digitalWrite(RELAYTOTALPIN, 0);  // 0 = rele desligado, VMC LIGADO
+
+  pinMode(DHTPINP, OUTPUT);
+  digitalWrite(DHTPINP, 1);  
 
   Serial.begin(115200);
   dht.begin();
@@ -207,6 +215,7 @@ void setup() {
   Serial.println();
   Serial.println();
 
+ 
 
   WiFi.begin(STASSID, STAPSK);
 
@@ -220,6 +229,7 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
 
+  ArduinoOTA.begin();
 
 
   //GET config EEPROM
@@ -285,6 +295,8 @@ void setup() {
 
 void loop() {
   // wait for WiFi connection
+  
+
   if ((WiFi.status() != WL_CONNECTED)) {
     Serial.println("Reconnecting to WIFI network");
     WiFi.disconnect();
@@ -292,6 +304,8 @@ void loop() {
     delay(2000);
     return;
   }
+
+  ArduinoOTA.handle();
 
   verificarHorarioDesligarLiga();
 
@@ -376,21 +390,24 @@ void executarTarefaHorarioDesligarLiga(int horaAtual, int minutoAtual, int on) {
 
 void readDHT22() {
 
-  // Read temperature as Celsius (the default)
-  float newT = dht.readTemperature();
-  if (isnan(newT)) {
-    Serial.println("Failed to read from DHT sensor!");
-  } else {
-    t = newT;
+
+  if (millis() - tempoAnteriorreadDHT22 > 2000) {
+        tempoAnteriorreadDHT22 = millis();
+        float newT = dht.readTemperature(), newH = dht.readHumidity();
+        if (!isnan(newT)) t = newT;
+        if (!isnan(newH)) h = newH;
+      
+        if (isnan(newT)){
+          digitalWrite(DHTPINP, LOW);  
+          delay(1000);  
+          digitalWrite(DHTPINP, HIGH);  
+          delay(1000);  
+          Serial.println("Error lendo DHT, reiniciando");
+        }
   }
-  // Read Humidity
-  float newH = dht.readHumidity();
-  // if humidity read failed, don't change h value
-  if (isnan(newH)) {
-    Serial.println("Failed to read from DHT sensor!");
-  } else {
-    h = newH;
-  }
+
+  
+
 }
 
 
@@ -398,7 +415,7 @@ void reconnectMQTT() {
   // Tenta reconectar ao broker MQTT
   Serial.print("Tentando conexão MQTT...");
   // Cria um ID aleatório para o cliente
-  String clientID = "ESP8266-" + String(WiFi.macAddress());
+  String clientID = "ESP8266";
   //if (mqttClient.connect(clientID.c_str(),MQTTUSER,MQTTPASS)) {
   if (mqttClient.connect(clientID.c_str())) {  // with SSL
     Serial.println("Conectado ao broker MQTT");
