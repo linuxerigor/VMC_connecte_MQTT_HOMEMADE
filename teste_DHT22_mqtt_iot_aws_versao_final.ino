@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <DHT.h>
@@ -19,14 +20,12 @@
 #define RELAYPIN 16       // relais forte
 #define RELAYTOTALPIN 17  // relais total
 
-#define MAX_TAREFAS 10
-
 int variacao_umidade = 4;               // Variação brusca (em porcentagem)
 int intervaloLeituravariacao = 150000;  //60000; // Tempo entre leituras
 
 float tolerancia_anterior = 0.0;  // umidade inicial
 float umidadeAnterior = 0.0;      // Armazena a última leitura de umidade
-unsigned long tempoAnteriorVariacao = 0;
+unsigned long tempoAnteriorvariacao = 0;
 
 // Estrutura para as tarefas agendadas
 struct Tarefa {
@@ -35,18 +34,31 @@ struct Tarefa {
   int dia;             // Dia do mês (1-31 ou -1 para todos os dias)
   int acao;            // Função a ser executada
   bool executadaHoje;  // Controle para evitar execuções repetidas
-} tarefas[MAX_TAREFAS];
+};
 
+// Vetor dinâmico para armazenar as tarefas
+std::vector<Tarefa> tarefas;
 
-DHT dht(DHTPIN, DHT22);
+// Uncomment the type of sensor in use:
+//#define DHTTYPE    DHT11     // DHT 11
+#define DHTTYPE DHT22  // DHT 22 (AM2302)
+DHT dht(DHTPIN, DHTTYPE);
 
 
 unsigned long tempoAnteriormqtt = 0;  // Variável para armazenar o último tempo registrado
 unsigned long intervalomqtt = 30000;  // Intervalo de 1 segundo (1000 milissegundos) send MQTT
 unsigned long tempoAnteriorreadDHT22 = 0;
 
-int ativar = 0, ativarauto = 0, estadovmc = 0, estadoturbo = 0;
-float t = 0.0, h = 0.0, hl = 0.0;
+int ativar = 0;
+int ativarauto = 0;
+
+int estadovmc = 0;
+int estadoturbo = 0;
+
+// current temperature & humidity, updated in loop()
+float t = 0.0;
+float h = 0.0;
+float hl = 0.0;
 
 WiFiClientSecure espClientForMQTT;  // wIth SSL ESP32
 
@@ -71,35 +83,92 @@ void ligadoturbo(int on) {
   MQTT();
 }
 
-void ligarVMC(int on) {
+void ligadovmc(int on) {
+  digitalWrite(RELAYTOTALPIN, on);
   estadovmc = on;
-  ligarRele(RELAYTOTALPIN, on);
-  if (on && estadoturbo) ligarTurbo(0);
-  publicarMQTT();
+  Serial.println("Rele ligado VMC = " + String(on));  // allume le relais
+
+  if (on == 1 && estadoturbo == 1) {
+    ligadoturbo(0);
+  }
+
+  MQTT();
 }
 
-
-void publicarMQTT() {
-  char buffer[50], message[100], topic[50];
-  timeClient.update();
-  snprintf(buffer, sizeof(buffer), "%d/%m/%Y %H:%M:%S", timeClient.getEpochTime());
-
-  snprintf(topic, sizeof(topic), "%s/data", mqttTopic);
-  snprintf(message, sizeof(message), "{\"h\":%d,\"t\":%d,\"estadovmc\":%d,\"estadoturbo\":%d,\"datetime\":\"%s\"}", 
-           (int)h, (int)t, estadovmc, estadoturbo, buffer);
-  mqttClient.publish(topic, message);
-  Serial.println("publicarMQTT = " + String(message)); 
-}
-
-void adicionarTarefa(int minuto, int hora, int dia, int acao) {
-  for (int i = 0; i < MAX_TAREFAS; i++) {
-    if (tarefas[i].hora == 0 && tarefas[i].minuto == 0) {
-      tarefas[i] = {minuto, hora, dia, acao, false};
-      break;
+void sendMQTT() {
+  if (millis() - tempoAnteriormqtt >= intervalomqtt) {
+    // Ação a ser realizada após o intervalo (1 segundo)
+    tempoAnteriormqtt = millis();  // Atualiza o último tempo registrado
+    if (hl != h) {
+      hl = h;
+      MQTT();
     }
   }
 }
 
+void getdate(char* buffer, int tamanho) {
+    timeClient.update(); // Atualiza o tempo do NTP
+
+    unsigned long rawTime = timeClient.getEpochTime(); // Obtém o timestamp UNIX
+    struct tm *timeInfo;
+    time_t now = rawTime;
+    timeInfo = localtime(&now); // Converte para formato de data e hora local
+
+    strftime(buffer, tamanho, "%d/%m/%Y %H:%M:%S", timeInfo);
+
+}
+
+void MQTT() {
+
+  char buffer[50];
+  getdate(buffer, sizeof(buffer));
+
+  // Publicar mensagem
+  char topic[50];
+  snprintf(topic, sizeof(topic), "%s/data", mqttTopic);
+  char message[100];
+  snprintf(message, sizeof(message), "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\",\"datetime\":\"%s\"}", (int)h, (int)t, estadovmc, estadoturbo,buffer);
+  mqttClient.publish(topic, message);
+  Serial.println("publicado " + String(topic) + " = " + String(message));
+}
+
+// Função para imprimir as tarefas (debug)
+void imprimirTarefas() {
+  char topic[50];
+  snprintf(topic, sizeof(topic), "%s/data", mqttTopic);
+  char message[100];
+
+  Serial.println("Lista de Tarefas:");
+  for (int i = 0; i < tarefas.size(); i++) {
+    Serial.print("Tarefa ");
+    Serial.print(i);
+    Serial.print(": Hora = ");
+    Serial.print(tarefas[i].hora);
+    Serial.print(", Minuto = ");
+    Serial.print(tarefas[i].minuto);
+    Serial.print(", Dia = ");
+    Serial.println(tarefas[i].dia);
+    // Publicar mensagem
+
+    snprintf(message, sizeof(message), "Tarefa : Hora = %d, Minuto = %d, Dia = %d, Acao = %d", tarefas[i].hora, tarefas[i].minuto, tarefas[i].dia, tarefas[i].acao);
+    mqttClient.publish(topic, message);
+    Serial.println("publicado " + String(topic) + " = " + String(message));
+  }
+}
+
+
+// Função para adicionar tarefas dinamicamente
+void adicionarTarefa(int minuto, int hora, int dia, int acao) {
+  Tarefa novaTarefa = { minuto, hora, dia, acao, false };
+  tarefas.push_back(novaTarefa);  // Adiciona ao vetor
+}
+
+// Função para limpar todas as tarefas
+void limparTarefas() {
+  tarefas.clear();  // Remove todas as tarefas do vetor
+}
+
+// Função para carregar tarefas do JSON
 void carregarTarefasJson(const String& jsonString) {
   // Cria o buffer JSON
   StaticJsonDocument<1024> doc;
@@ -281,19 +350,42 @@ void loop() {
 
 
 void verificarHorarioDesligarLiga() {
-  timeClient.update();
-  int horaAtual = timeClient.getHours(), minutoAtual = timeClient.getMinutes(), diaAtual = timeClient.getDay();
 
-  for (Tarefa &t : tarefas) {
-    if ((t.hora == -1 || t.hora == horaAtual) && 
-        (t.minuto == -1 || t.minuto == minutoAtual) &&
-        (t.dia == -1 || t.dia == diaAtual) &&
-        !t.executadaHoje) {
-      ligarVMC(t.acao);
-      t.executadaHoje = true;
+  timeClient.update();
+
+  // Obtém o horário atual
+  int horaAtual = timeClient.getHours();
+  int minutoAtual = timeClient.getMinutes();
+  int diaAtual = timeClient.getDay();  // Pode ser ajustado para data completa se necessário
+
+  // Verifica as tarefas agendadas
+  for (int i = 0; i < tarefas.size(); i++) {
+    Tarefa& t = tarefas[i];  // Referência para a tarefa atual
+
+    // Verifica se o horário corresponde à tarefa
+    bool horaValida = (t.hora == -1 || t.hora == horaAtual);
+    bool minutoValido = (t.minuto == -1 || t.minuto == minutoAtual);
+    bool diaValido = (t.dia == -1 || t.dia == diaAtual);
+
+    if (horaValida && minutoValido && diaValido && !t.executadaHoje) {
+      executarTarefaHorarioDesligarLiga(horaAtual, minutoAtual, t.acao);
+      t.executadaHoje = true;  // Marca como executada
     }
-    if (t.hora != horaAtual || t.minuto != minutoAtual) t.executadaHoje = false;
+
+    // Reinicia o controle após passar do horário
+    if (!horaValida || !minutoValido) {
+      t.executadaHoje = false;
+    }
   }
+}
+
+void executarTarefaHorarioDesligarLiga(int horaAtual, int minutoAtual, int on) {
+  // Exibe o horário no monitor serial
+  Serial.print("Horário atual: ");
+  Serial.print(horaAtual);
+  Serial.print(":");
+  Serial.println(minutoAtual);
+  ligadovmc(on);
 }
 
 void readDHT22() {
@@ -320,6 +412,7 @@ void readDHT22() {
 
 
 void reconnectMQTT() {
+  // Tenta reconectar ao broker MQTT
   Serial.print("Tentando conexão MQTT...");
   // Cria um ID aleatório para o cliente
   String clientID = "ESP8266";
@@ -335,14 +428,16 @@ void reconnectMQTT() {
     snprintf(topic, sizeof(topic), "%s/config", mqttTopic);
     mqttClient.subscribe(topic);
   } else {
-    Serial.print("Falha reconnectMQTT: ");
+    Serial.print("Falha, rc=");
     Serial.println(mqttClient.state());
+    delay(5000);
   }
 }
 
-
 void readconfig(String mensagem) {
-  Serial.print("Config recebido no tópico. Payload: ");
+
+  Serial.print("Config recebido no tópico  ");
+  Serial.print("Payload: ");
   Serial.println(mensagem);
 
   // Faz o parse do JSON
@@ -355,139 +450,68 @@ void readconfig(String mensagem) {
     return;  // Sai da função em caso de erro
   }
 
-  // Obtém a chave e o valor do JSON
-  const char* chave = doc["chave"];
-  int valor = doc["valor"];
-
-  if (!chave) {
-    Serial.println("Erro: chave inválida no JSON.");
-    return;
+  if (String(doc["chave"]).equals("variacao_umidade")) {
+    variacao_umidade = doc["valor"];
+    EEPROM.put(0, variacao_umidade);  // Salva na EEPROM
+    Serial.printf("salvando config na memoria : %d\n", variacao_umidade);
+  } else if (String(doc["chave"]).equals("intervaloLeituravariacao")) {
+    intervaloLeituravariacao = doc["valor"];
+    EEPROM.put((0 + sizeof(int)), intervaloLeituravariacao);  // Salva na EEPROM
+    Serial.printf("salvando config na memoria : %d\n", intervaloLeituravariacao);
+  } else if (String(doc["chave"]).equals("t")) {
+    carregarTarefasJson(doc["valor"]);  // Carrega as tarefas iniciais
   }
 
-  if (strcmp(chave, "variacao_umidade") == 0) {
-    if (variacao_umidade != valor) {  // Só salva se o valor for diferente
-      variacao_umidade = valor;
-      EEPROM.put(0, variacao_umidade);  
-      Serial.printf("Salvando config na memória: %d\n", variacao_umidade);
-    }
-  } 
-  else if (strcmp(chave, "intervaloLeituravariacao") == 0) {
-    if (intervaloLeituravariacao != valor) {  // Só salva se o valor for diferente
-      intervaloLeituravariacao = valor;
-      EEPROM.put(0 + sizeof(int), intervaloLeituravariacao);  
-      Serial.printf("Salvando config na memória: %d\n", intervaloLeituravariacao);
-    }
-  } 
-  else if (strcmp(chave, "t") == 0) {
-    carregarTarefasJson(doc["valor"]);  // Chama a função se a chave for "t"
-  } 
-  else {
-    Serial.println("Chave desconhecida. Nenhuma ação realizada.");
-    return;
-  }
+  //GET config EEPROM
+  EEPROM.get(0, variacao_umidade);                          // Lê o valor da EEPROM
+  EEPROM.get((0 + sizeof(int)), intervaloLeituravariacao);  // Lê o valor da EEPROM
 
-  // Recupera os valores da EEPROM após a atualização
-  EEPROM.get(0, variacao_umidade);
-  EEPROM.get(0 + sizeof(int), intervaloLeituravariacao);
-
-  Serial.println("\nRecuperando config EEPROM:");
+  Serial.println("\nRecuperando config EEPROM.\n");
   Serial.printf("variacao_umidade: %d\n", variacao_umidade);
   Serial.printf("intervaloLeituravariacao: %d\n\n", intervaloLeituravariacao);
 }
 
-// Função de callback otimizada para tratar as mensagens recebidas
+// Função de callback para tratar as mensagens recebidas
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Mensagem recebida em [");
   Serial.print(topic);
   Serial.print("] ");
 
-  String mensagem = "";
-  for (unsigned int i = 0; i < length; i++) {
+  for (int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
-    mensagem += (char)payload[i];
   }
   Serial.println();
 
-  // Verifica o tópico e executa a ação correspondente
-  if (strncmp(topic, (String(mqttTopic) + "/ligadoturbo").c_str(), strlen(topic)) == 0) {
-    ligarTurbo(payload[0] == '1' ? 1 : 0);
-  } 
-  else if (strncmp(topic, (String(mqttTopic) + "/ligadovmc").c_str(), strlen(topic)) == 0) {
-    ligarVMC(payload[0] == '1' ? 1 : 0);
-  } 
-  else if (strncmp(topic, (String(mqttTopic) + "/config").c_str(), strlen(topic)) == 0) {
+  // Se receber uma mensagem, executa alguma ação (exemplo: ligar uma luz)
+  if (String(topic) == String(mqttTopic) + "/ligadoturbo") {
+    if ((char)payload[0] == '1') {
+
+      ligadoturbo(1);
+
+    } else if ((char)payload[0] == '0') {
+
+      ligadoturbo(0);
+    }
+  }
+
+  if (String(topic) == String(mqttTopic) + "/ligadovmc") {
+    if ((char)payload[0] == '1') {
+
+      ligadovmc(1);
+
+    } else if ((char)payload[0] == '0') {
+
+      ligadovmc(0);
+    }
+  }
+
+
+  if (String(topic) == String(mqttTopic) + "/config") {
+    String mensagem = "";
+    for (int i = 0; i < length; i++) {
+      mensagem += (char)payload[i];
+    }
+
     readconfig(mensagem);
-  }
-}
-
-void setup() {
-  pinMode(RELAYPIN, OUTPUT);
-  pinMode(RELAYTOTALPIN, OUTPUT);
-  ligarRele(RELAYPIN, 0);
-  ligarRele(RELAYTOTALPIN, 0);
-  
-  Serial.begin(115200);
-  dht.begin();
-  WiFi.begin(STASSID, STAPSK);
-  while (WiFi.status() != WL_CONNECTED) delay(500);
-
-  Serial.println("Conectado! IP: " + WiFi.localIP().toString());
-
-  EEPROM.get(0, variacao_umidade);
-  EEPROM.get(sizeof(int), intervaloLeituravariacao);
-
-  timeClient.begin();
-  timeClient.setTimeOffset(3600);
-
-  espClientForMQTT.setCACert(rootCACert);
-  espClientForMQTT.setCertificate(clientCert);
-  espClientForMQTT.setPrivateKey(privateKey);
-
-  mqttClient.setServer(MQTTSERVER, MQTTPORT);
-  mqttClient.setKeepAlive(60);
-  mqttClient.setCallback(callback);
-
-  String json = R"({"t":[{"h":23,"m":30,"d":-1,"a":1},{"h":6,"m":30,"d":-1,"a":0}]})";
-  carregarTarefasJson(json);
-  
-  readDHT22();
-  umidadeAnterior = h;
-}
-
-void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
-    WiFi.disconnect();
-    WiFi.reconnect();
-    delay(2000);
-    return;
-  }
-
-  verificarHorarioDesligarLiga();
-  readDHT22();
-  
-  if (millis() - tempoAnteriorVariacao > intervaloLeituravariacao) {
-    tempoAnteriorVariacao = millis();
-    if ((h - umidadeAnterior) > variacao_umidade) {
-      ligarTurbo(1);
-      ativarauto = 1;
-      tolerancia_anterior = umidadeAnterior;
-    }
-    umidadeAnterior = h;
-  }
-
-  if (ativarauto && h <= tolerancia_anterior) {
-    ligarTurbo(0);
-    ativarauto = 0;
-  }
-
-  if (!mqttClient.connected()) reconnectMQTT();
-  mqttClient.loop();
-  
-  if (millis() - tempoAnteriormqtt >= intervalomqtt) {
-    tempoAnteriormqtt = millis();
-    if (hl != h) {
-      hl = h;
-      publicarMQTT();
-    }
   }
 }
