@@ -75,6 +75,11 @@ void ligadoturbo(int on) {
   Serial.println("Rele ligado turbo =" + String(on));
   digitalWrite(RELAYPIN, on);  // allume le relais
 
+  if (on == 0) {
+    tolerancia_anterior = h;
+    ativarauto = 0;
+  }
+
   if (on == 1 && estadovmc == 1) {
     ligadovmc(!on);
   }
@@ -126,7 +131,7 @@ void MQTT() {
   char topic[50];
   snprintf(topic, sizeof(topic), "%s/data", mqttTopic);
   char message[100];
-  snprintf(message, sizeof(message), "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\",\"datetime\":\"%s\"}", (int)h, (int)t, estadovmc, estadoturbo,buffer);
+  snprintf(message, sizeof(message), "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\",\"dt\":\"%s\"}", (int)h, (int)t, estadovmc, estadoturbo,buffer);
   mqttClient.publish(topic, message);
   Serial.println("publicado " + String(topic) + " = " + String(message));
 }
@@ -272,6 +277,7 @@ void setup() {
 
   readDHT22();
   umidadeAnterior = h;
+  tolerancia_anterior = h;
 }
 
 void loop() {
