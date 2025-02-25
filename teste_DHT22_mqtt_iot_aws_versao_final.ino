@@ -8,10 +8,14 @@
 #include <ArduinoJson.h>  // Biblioteca para manipulação de JSON
 #include <NTPClient.h>    // Biblioteca para sincronizar horário
 #include <WiFiUdp.h>      // Biblioteca para UDP
+#include <vector>         // Para vetor dinâmico
+#include <ArduinoOTA.h>
+
 
 #include "config.h"
 
 #define DHTPIN 23          // Digital pin connected to the DHT sensor
+#define DHTPINP 14          // Digital pin connected to the DHT sensor
 #define RELAYPIN 16       // relais forte
 #define RELAYTOTALPIN 17  // relais total
 
@@ -38,7 +42,8 @@ DHT dht(DHTPIN, DHT22);
 
 
 unsigned long tempoAnteriormqtt = 0;  // Variável para armazenar o último tempo registrado
-const unsigned long intervalomqtt = 30000;  // Intervalo de 1 segundo (1000 milissegundos) send MQTT
+unsigned long intervalomqtt = 30000;  // Intervalo de 1 segundo (1000 milissegundos) send MQTT
+unsigned long tempoAnteriorreadDHT22 = 0;
 
 int ativar = 0, ativarauto = 0, estadovmc = 0, estadoturbo = 0;
 float t = 0.0, h = 0.0, hl = 0.0;
@@ -50,17 +55,20 @@ PubSubClient mqttClient(espClientForMQTT);
 // Configuração do cliente NTP
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", 3600, 60000);  // 3600 = UTC+1
+int timeZone = 1; // Configuração do fuso horário
 
-void ligarRele(int pin, int estado) {
-  digitalWrite(pin, estado);
-  Serial.println("ligarRele =" + String(estado));
-}
 
-void ligarTurbo(int on) {
-  ativar = estadoturbo = on;
-  ligarRele(RELAYPIN, on);
-  if (on && estadovmc) ligarRele(RELAYTOTALPIN, 0);
-  publicarMQTT();
+void ligadoturbo(int on) {
+  ativar = on;
+  estadoturbo = on;
+  Serial.println("Rele ligado turbo =" + String(on));
+  digitalWrite(RELAYPIN, on);  // allume le relais
+
+  if (on == 1 && estadovmc == 1) {
+    ligadovmc(!on);
+  }
+
+  MQTT();
 }
 
 void ligarVMC(int on) {
@@ -93,14 +101,184 @@ void adicionarTarefa(int minuto, int hora, int dia, int acao) {
 }
 
 void carregarTarefasJson(const String& jsonString) {
-  StaticJsonDocument<512> doc;
-  if (deserializeJson(doc, jsonString)) return;
-  
-  memset(tarefas, 0, sizeof(tarefas));
-  for (JsonObject obj : doc["t"].as<JsonArray>()) {
-    adicionarTarefa(obj["m"], obj["h"], obj["d"], obj["a"]);
+  // Cria o buffer JSON
+  StaticJsonDocument<1024> doc;
+
+  // Analisa o JSON
+  DeserializationError erro = deserializeJson(doc, jsonString);
+  if (erro) {
+    Serial.print("Erro ao processar JSON: ");
+    Serial.println(erro.c_str());
+    return;
   }
+
+  // Limpa as tarefas atuais
+  limparTarefas();
+
+  // Percorre o array JSON
+  JsonArray array = doc["t"].as<JsonArray>();
+  for (JsonObject obj : array) {
+    int hora = obj["h"];
+    int minuto = obj["m"];
+    int dia = obj["d"];
+    int acao = obj["a"];  // Define qual ação será executada
+    adicionarTarefa(minuto, hora, dia, acao);
+  }
+  Serial.println("Tarefas carregadas!");
+  imprimirTarefas();
 }
+
+void setup() {
+
+  pinMode(RELAYPIN, OUTPUT);       // définit la broche du relais en sortie
+  pinMode(RELAYTOTALPIN, OUTPUT);  // définit la broche du relais en sortie
+  
+  digitalWrite(RELAYPIN, 0);       // 0 = rele desligado, turbo desligado
+  digitalWrite(RELAYTOTALPIN, 0);  // 0 = rele desligado, VMC LIGADO
+
+  pinMode(DHTPINP, OUTPUT);
+  digitalWrite(DHTPINP, 1);  
+
+  Serial.begin(115200);
+  dht.begin();
+
+  Serial.println();
+  Serial.println();
+  Serial.println();
+
+ 
+
+  WiFi.begin(STASSID, STAPSK);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.print("Connected! IP address: ");
+  Serial.println(WiFi.localIP());
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
+
+  ArduinoOTA.begin();
+
+
+  //GET config EEPROM
+  EEPROM.get(0, variacao_umidade);                          // Lê o valor da EEPROM
+  EEPROM.get((0 + sizeof(int)), intervaloLeituravariacao);  // Lê o valor da EEPROM
+
+  Serial.println("\nRecuperando config EEPROM.\n");
+  Serial.printf("variacao_umidade: %d\n", variacao_umidade);
+  Serial.printf("intervaloLeituravariacao: %d\n\n", intervaloLeituravariacao);
+
+  if (variacao_umidade == -1 || variacao_umidade == 0) {
+    Serial.println("Valor inválido na EEPROM. Salvando o valor padrão.");
+    variacao_umidade = 20;
+    EEPROM.put(0, variacao_umidade);
+  }
+
+  if (intervaloLeituravariacao == -1 || intervaloLeituravariacao == 0) {
+    Serial.println("Valor inválido na EEPROM. Salvando o valor padrão.");
+    intervaloLeituravariacao = 60000;
+    EEPROM.put((0 + sizeof(int)), intervaloLeituravariacao);
+  }
+
+
+  // Inicializa o cliente NTP
+  timeClient.begin();
+  timeClient.setTimeOffset(timeZone * 3600);  // Define o fuso horário
+
+
+  //#########################
+  // Configura o cliente MQTT (ESP8266)
+  //  espClientForMQTT.setTrustAnchors(new BearSSL::X509List(rootCACert));         // CA Root
+  //  espClientForMQTT.setClientRSACert(new BearSSL::X509List(clientCert),     // Certificado do cliente
+  //                       new BearSSL::PrivateKey(privateKey));  // Chave privada
+
+  // Configura o certificado raiz SSL/TLS (ESP32)
+  espClientForMQTT.setCACert(rootCACert);
+  espClientForMQTT.setCertificate(clientCert);  // Certificado do cliente
+  espClientForMQTT.setPrivateKey(privateKey);   // Chave privada do cliente
+                                                //#########################
+
+  // Configura o servidor MQTT
+  mqttClient.setServer(MQTTSERVER, MQTTPORT);
+
+  mqttClient.setKeepAlive(60);      // Tempo em segundos
+  mqttClient.setSocketTimeout(10);  // 10 segundos
+
+  // Configura o tópico para assinatura
+  mqttClient.setCallback(callback);
+
+  // Exemplo de JSON para inicialização
+  String json = R"(
+  {
+    "t": [
+      {"h": 23, "m": 30, "d": -1, "a": 1},
+      {"h": 6, "m": 30, "d": -1, "a": 0}
+    ]
+  })";
+  carregarTarefasJson(json);  // Carrega as tarefas iniciais
+
+  readDHT22();
+  umidadeAnterior = h;
+}
+
+void loop() {
+  // wait for WiFi connection
+  
+
+  if ((WiFi.status() != WL_CONNECTED)) {
+    Serial.println("Reconnecting to WIFI network");
+    WiFi.disconnect();
+    WiFi.reconnect();
+    delay(2000);
+    return;
+  }
+
+  ArduinoOTA.handle();
+
+  verificarHorarioDesligarLiga();
+
+  readDHT22();
+  // Verifica se a leitura é válida
+  if (isnan(h)) {
+    Serial.println("Falha na leitura do sensor DHT!");
+    return;  // Sai da função loop() até a próxima leitura
+  }
+
+  // Atualiza o valor anterior da umidade
+  if (millis() - tempoAnteriorvariacao > intervaloLeituravariacao) {
+    Serial.println("Verifica variação brusca ...");
+    tempoAnteriorvariacao = millis();
+    if ((h - umidadeAnterior) > variacao_umidade) {
+      Serial.printf("Variação brusca detectada! (%f - %f) > %d \n", h, umidadeAnterior, variacao_umidade);
+      ligadoturbo(1);
+      ativarauto = 1;
+      tolerancia_anterior = umidadeAnterior;  // * 1.01;
+    }
+    umidadeAnterior = h;
+  }
+
+
+  if (ativarauto && h <= (tolerancia_anterior)) {
+    Serial.println("Umidade retornour patamar anterior!");
+    ligadoturbo(0);
+    tolerancia_anterior = h;
+    ativarauto = 0;
+  }
+  ////////////////////////////////////////////////////////
+
+  // Conecta-se ao broker MQTT
+  if (!mqttClient.connected()) {
+    reconnectMQTT();
+  }
+  // Processa mensagens MQTT
+  mqttClient.loop();
+
+  sendMQTT();
+}
+
 
 void verificarHorarioDesligarLiga() {
   timeClient.update();
@@ -119,15 +297,36 @@ void verificarHorarioDesligarLiga() {
 }
 
 void readDHT22() {
-  float newT = dht.readTemperature(), newH = dht.readHumidity();
-  if (!isnan(newT)) t = newT;
-  if (!isnan(newH)) h = newH;
+
+
+  if (millis() - tempoAnteriorreadDHT22 > 2000) {
+        tempoAnteriorreadDHT22 = millis();
+        float newT = dht.readTemperature(), newH = dht.readHumidity();
+        if (!isnan(newT)) t = newT;
+        if (!isnan(newH)) h = newH;
+      
+        if (isnan(newT)){
+          digitalWrite(DHTPINP, LOW);  
+          delay(1000);  
+          digitalWrite(DHTPINP, HIGH);  
+          delay(1000);  
+          Serial.println("Error lendo DHT, reiniciando");
+        }
+  }
+
+  
+
 }
+
 
 void reconnectMQTT() {
   Serial.print("Tentando conexão MQTT...");
-  if (mqttClient.connect(("ESP32_" + WiFi.macAddress()).c_str())) {
-    Serial.println("Conectado!");
+  // Cria um ID aleatório para o cliente
+  String clientID = "ESP8266";
+  //if (mqttClient.connect(clientID.c_str(),MQTTUSER,MQTTPASS)) {
+  if (mqttClient.connect(clientID.c_str())) {  // with SSL
+    Serial.println("Conectado ao broker MQTT");
+    // Se conecta a um tópico
     char topic[50];
     snprintf(topic, sizeof(topic), "%s/ligadoturbo", mqttTopic);
     mqttClient.subscribe(topic);
