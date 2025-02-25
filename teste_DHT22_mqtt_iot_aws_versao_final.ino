@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <Arduino.h>
-#include <EEPROM.h>
 #include <DHT.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>  
@@ -232,26 +231,8 @@ void setup() {
   ArduinoOTA.begin();
 
 
-  //GET config EEPROM
-  EEPROM.get(0, variacao_umidade);                          // Lê o valor da EEPROM
-  EEPROM.get((0 + sizeof(int)), intervaloLeituravariacao);  // Lê o valor da EEPROM
-
-  Serial.println("\nRecuperando config EEPROM.\n");
   Serial.printf("variacao_umidade: %d\n", variacao_umidade);
   Serial.printf("intervaloLeituravariacao: %d\n\n", intervaloLeituravariacao);
-
-  if (variacao_umidade == -1 || variacao_umidade == 0) {
-    Serial.println("Valor inválido na EEPROM. Salvando o valor padrão.");
-    variacao_umidade = 20;
-    EEPROM.put(0, variacao_umidade);
-  }
-
-  if (intervaloLeituravariacao == -1 || intervaloLeituravariacao == 0) {
-    Serial.println("Valor inválido na EEPROM. Salvando o valor padrão.");
-    intervaloLeituravariacao = 60000;
-    EEPROM.put((0 + sizeof(int)), intervaloLeituravariacao);
-  }
-
 
   // Inicializa o cliente NTP
   timeClient.begin();
@@ -452,23 +433,13 @@ void readconfig(String mensagem) {
 
   if (String(doc["chave"]).equals("variacao_umidade")) {
     variacao_umidade = doc["valor"];
-    EEPROM.put(0, variacao_umidade);  // Salva na EEPROM
     Serial.printf("salvando config na memoria : %d\n", variacao_umidade);
   } else if (String(doc["chave"]).equals("intervaloLeituravariacao")) {
     intervaloLeituravariacao = doc["valor"];
-    EEPROM.put((0 + sizeof(int)), intervaloLeituravariacao);  // Salva na EEPROM
     Serial.printf("salvando config na memoria : %d\n", intervaloLeituravariacao);
   } else if (String(doc["chave"]).equals("t")) {
     carregarTarefasJson(doc["valor"]);  // Carrega as tarefas iniciais
   }
-
-  //GET config EEPROM
-  EEPROM.get(0, variacao_umidade);                          // Lê o valor da EEPROM
-  EEPROM.get((0 + sizeof(int)), intervaloLeituravariacao);  // Lê o valor da EEPROM
-
-  Serial.println("\nRecuperando config EEPROM.\n");
-  Serial.printf("variacao_umidade: %d\n", variacao_umidade);
-  Serial.printf("intervaloLeituravariacao: %d\n\n", intervaloLeituravariacao);
 }
 
 // Função de callback para tratar as mensagens recebidas
