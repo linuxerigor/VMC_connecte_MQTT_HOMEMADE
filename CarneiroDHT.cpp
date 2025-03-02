@@ -7,7 +7,7 @@ int intervaloLeituravariacao = 150000;  //60000; // Tempo entre leituras
 float tolerancia_anterior = 0.0;  // umidade inicial
 float umidadeAnterior = 0.0;      // Armazena a última leitura de umidade
 unsigned long tempoAnteriorvariacao = 0;
-
+unsigned long tempoAnteriorreadDHT22 = 0;
 
 
 // Vetor dinâmico para armazenar as tarefas
@@ -99,7 +99,7 @@ void MQTT() {
   char topic[50];
   snprintf(topic, sizeof(topic), "%s/data", mqttTopic);
   char message[100];
-  snprintf(message, sizeof(message), "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\",\"datetime\":\"%s\"}", (int)h, (int)t, estadovmc, estadoturbo,buffer);
+  snprintf(message, sizeof(message), "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\",\"dt\":\"%s\"}", (int)h, (int)t, estadovmc, estadoturbo,buffer);
   mqttClient.publish(topic, message);
   Serial.println("publicado " + String(topic) + " = " + String(message));
 }
@@ -210,21 +210,22 @@ void executarTarefaHorarioDesligarLiga(int horaAtual, int minutoAtual, int on) {
 }
 
 void readDHT22() {
+  if (millis() - tempoAnteriorreadDHT22 > 2000) {
 
-  // Read temperature as Celsius (the default)
-  float newT = dht.readTemperature();
-  if (isnan(newT)) {
-    Serial.println("Failed to read from DHT sensor!");
-  } else {
-    t = newT;
-  }
-  // Read Humidity
-  float newH = dht.readHumidity();
-  // if humidity read failed, don't change h value
-  if (isnan(newH)) {
-    Serial.println("Failed to read from DHT sensor!");
-  } else {
-    h = newH;
+        verificarHorarioDesligarLiga();
+
+        tempoAnteriorreadDHT22 = millis();
+        float newT = dht.readTemperature(), newH = dht.readHumidity();
+        if (!isnan(newT)) t = newT;
+        if (!isnan(newH)) h = newH;
+      
+        if (isnan(newT)){
+          digitalWrite(DHTPINP, LOW);  
+          delay(1000);  
+          digitalWrite(DHTPINP, HIGH);  
+          delay(1000);  
+          Serial.println("Error lendo DHT, reiniciando");
+        }
   }
 }
 

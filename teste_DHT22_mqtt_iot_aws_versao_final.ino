@@ -87,20 +87,13 @@ void loop() {
     Serial.println("Reconnecting to WIFI network");
     WiFi.disconnect();
     WiFi.reconnect();
-    delay(2000);
+    delay(5000);
     return;
   }
 
   ArduinoOTA.handle();
 
-  verificarHorarioDesligarLiga();
-
   readDHT22();
-  // Verifica se a leitura é válida
-  if (isnan(h)) {
-    Serial.println("Falha na leitura do sensor DHT!");
-    return;  // Sai da função loop() até a próxima leitura
-  }
 
   // Atualiza o valor anterior da umidade
   if (millis() - tempoAnteriorvariacao > intervaloLeituravariacao) {

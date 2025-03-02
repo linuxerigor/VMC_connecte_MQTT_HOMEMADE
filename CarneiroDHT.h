@@ -28,6 +28,7 @@ extern int intervaloLeituravariacao;
 extern float tolerancia_anterior;
 extern float umidadeAnterior;
 extern unsigned long tempoAnteriorvariacao;
+extern unsigned long tempoAnteriorreadDHT22;
 extern unsigned long tempoAnteriormqtt;
 extern unsigned long intervalomqtt;
 
