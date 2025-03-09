@@ -1,0 +1,19 @@
+#include "config.h"
+
+// Certificados e chave (copie os certificados para cá como string)
+const char* rootCACert = R"EOF(
+-----BEGIN CERTIFICATE-----
+-----END CERTIFICATE-----
+)EOF";
+
+const char* clientCert = R"KEY(
+-----BEGIN CERTIFICATE-----
+-----END CERTIFICATE-----
+)KEY";
+
+const char* privateKey = R"KEY(
+-----BEGIN RSA PRIVATE KEY-----
+-----END RSA PRIVATE KEY-----
+)KEY";
+
+const char* mqttTopic = "xxxxx/vmc";  // Tópico MQTT

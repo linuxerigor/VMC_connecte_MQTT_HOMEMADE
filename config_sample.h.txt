@@ -1,0 +1,23 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+
+#ifndef STASSID
+#define STASSID "xxxxx"
+#define STAPSK "xxxx"
+#endif
+
+
+// Endereço IP do broker MQTT
+#define MQTTSERVER "xxxxx.iot.us-east-1.amazonaws.com"  // "44.211.26.171"
+#define MQTTPORT 8883                                                //1883
+#define MQTTUSER "admin"
+#define MQTTPASS "xxxxxxx"
+
+// Certificados e chave (copie os certificados para cá como string)
+extern const char* rootCACert;
+extern const char* clientCert;
+extern const char* privateKey;
+extern const char* mqttTopic;
+
+#endif // CONFIG_H
