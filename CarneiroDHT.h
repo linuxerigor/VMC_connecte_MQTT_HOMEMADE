@@ -12,6 +12,7 @@
 #include <WiFiUdp.h>      // Biblioteca para UDP
 #include <vector>         // Para vetor dinâmico
 #include <ArduinoOTA.h>
+#include "esp_system.h"
 
 #include "config.h"
 

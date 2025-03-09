@@ -69,7 +69,8 @@ void setup() {
   {
     "t": [
       {"h": 23, "m": 30, "d": -1, "a": 1},
-      {"h": 6, "m": 30, "d": -1, "a": 0}
+      {"h": 6, "m": 30, "d": -1, "a": 0},
+      {"h": 10, "m": 00, "d": -1, "a": 2}
     ]
   })";
   carregarTarefasJson(json);  // Carrega as tarefas iniciais

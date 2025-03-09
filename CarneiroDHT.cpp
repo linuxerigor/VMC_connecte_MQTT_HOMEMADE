@@ -206,7 +206,12 @@ void executarTarefaHorarioDesligarLiga(int horaAtual, int minutoAtual, int on) {
   Serial.print(horaAtual);
   Serial.print(":");
   Serial.println(minutoAtual);
-  ligadovmc(on);
+  if (on == 0||on == 1) {
+     ligadovmc(on);
+  }
+  if (on == 2 ) {
+     esp_restart(); 
+  }
 }
 
 void readDHT22() {
