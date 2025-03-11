@@ -21,6 +21,7 @@
 #define RELAYPIN 16       // relais forte
 #define RELAYTOTALPIN 17  // relais total
 
+
 extern DHT dht;
 
 extern int variacao_umidade;

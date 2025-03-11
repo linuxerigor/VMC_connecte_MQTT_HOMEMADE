@@ -1,5 +1,7 @@
-#include "esp_task_wdt.h"
 #include "CarneiroDHT.h"
+#include "esp_task_wdt.h"
+
+#define WDT_TIMEOUT 5  // Tempo limite do watchdog (em segundos)
 
 void setup() {
 
@@ -13,8 +15,18 @@ void setup() {
   digitalWrite(DHTPINP, 1);  
 
   Serial.begin(115200);
-  esp_task_wdt_init(5, true);
-  esp_task_wdt_add(NULL);
+
+    // Configura o Watchdog Timer (WDT)
+    esp_task_wdt_config_t wdtConfig = {
+        .timeout_ms = WDT_TIMEOUT * 1000,  // Converte segundos para milissegundos
+        .idle_core_mask = 0,  // Desabilita monitoramento de núcleos ociosos
+        .trigger_panic = true,  // Reinicia o ESP32 se travar
+    };
+
+    // Inicializa o watchdog corretamente
+    esp_task_wdt_init(&wdtConfig);
+    esp_task_wdt_add(NULL);  // Adiciona a tarefa principal ao watchdog
+
   dht.begin();
 
   Serial.println();
