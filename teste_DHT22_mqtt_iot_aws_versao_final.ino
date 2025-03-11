@@ -1,3 +1,4 @@
+#include "esp_task_wdt.h"
 #include "CarneiroDHT.h"
 
 void setup() {
@@ -12,6 +13,8 @@ void setup() {
   digitalWrite(DHTPINP, 1);  
 
   Serial.begin(115200);
+  esp_task_wdt_init(5, true);
+  esp_task_wdt_add(NULL);
   dht.begin();
 
   Serial.println();
@@ -81,9 +84,8 @@ void setup() {
 }
 
 void loop() {
+   
   // wait for WiFi connection
-  
-
   if ((WiFi.status() != WL_CONNECTED)) {
     Serial.println("Reconnecting to WIFI network");
     WiFi.disconnect();
@@ -126,4 +128,6 @@ void loop() {
   mqttClient.loop();
 
   sendMQTT();
+
+  esp_task_wdt_reset(); // Watchdog
 }
