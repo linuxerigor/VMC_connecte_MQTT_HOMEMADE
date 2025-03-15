@@ -19,7 +19,7 @@
 #define RELAYPIN 16       // relais forte
 #define RELAYTOTALPIN 17  // relais total
 
-#define WDT_TIMEOUT 20  
+#define WDT_TIMEOUT 5
 
 extern DHT dht;
 

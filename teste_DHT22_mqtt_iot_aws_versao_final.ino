@@ -39,11 +39,17 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
 
-  ArduinoOTA.setTimeout(10000);
+  ArduinoOTA.setTimeout(30000);
   ArduinoOTA.begin();
 
   Serial.printf("variacao_umidade: %d\n", variacao_umidade);
   Serial.printf("intervaloLeituravariacao: %d\n\n", intervaloLeituravariacao);
+
+
+  adicionarTarefa(30, 23, -1, 1);
+  adicionarTarefa(30, 6, -1, 0);
+  adicionarTarefa(30, 9, -1, 2);
+  adicionarTarefa(30, 15, -1, 2);
 
   // Inicializa o cliente NTP
   timeClient.begin();
@@ -67,6 +73,8 @@ void setup() {
   readDHT22();
   umidadeAnterior = h;
   tolerancia_anterior = h;
+
+  esp_task_wdt_reset(); // Watchdog
 }
 
 void loop() {
@@ -115,4 +123,5 @@ void loop() {
 
   sendMQTT();
 
+  esp_task_wdt_reset(); // Watchdog
 }

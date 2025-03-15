@@ -91,7 +91,6 @@ void getdate(char* buffer, int tamanho) {
 }
 
 void MQTT() {
-
   char buffer[50];
   getdate(buffer, sizeof(buffer));
 
@@ -103,7 +102,6 @@ void MQTT() {
   mqttClient.publish(topic, message);
   Serial.println("publicado " + String(topic) + " = " + String(message));
 
-  esp_task_wdt_reset(); // Watchdog
 }
 
 
