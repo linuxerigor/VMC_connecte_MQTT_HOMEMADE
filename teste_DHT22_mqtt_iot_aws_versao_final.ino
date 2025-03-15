@@ -1,7 +1,5 @@
 #include "CarneiroDHT.h"
-#include "esp_task_wdt.h"
 
-#define WDT_TIMEOUT 5  // Tempo limite do watchdog (em segundos)
 
 void setup() {
 
@@ -23,17 +21,11 @@ void setup() {
         .trigger_panic = true,  // Reinicia o ESP32 se travar
     };
 
-    // Inicializa o watchdog corretamente
-    esp_task_wdt_init(&wdtConfig);
-    esp_task_wdt_add(NULL);  // Adiciona a tarefa principal ao watchdog
+  // Watchdog
+  esp_task_wdt_init(&wdtConfig);
+  esp_task_wdt_add(NULL);
 
   dht.begin();
-
-  Serial.println();
-  Serial.println();
-  Serial.println();
-
- 
 
   WiFi.begin(STASSID, STAPSK);
 
@@ -47,8 +39,8 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
 
+  ArduinoOTA.setTimeout(10000);
   ArduinoOTA.begin();
-
 
   Serial.printf("variacao_umidade: %d\n", variacao_umidade);
   Serial.printf("intervaloLeituravariacao: %d\n\n", intervaloLeituravariacao);
@@ -58,18 +50,11 @@ void setup() {
   timeClient.setTimeOffset(timeZone * 3600);  // Define o fuso horário
 
 
-  //#########################
-  // Configura o cliente MQTT (ESP8266)
-  //  espClientForMQTT.setTrustAnchors(new BearSSL::X509List(rootCACert));         // CA Root
-  //  espClientForMQTT.setClientRSACert(new BearSSL::X509List(clientCert),     // Certificado do cliente
-  //                       new BearSSL::PrivateKey(privateKey));  // Chave privada
-
   // Configura o certificado raiz SSL/TLS (ESP32)
   espClientForMQTT.setCACert(rootCACert);
-  espClientForMQTT.setCertificate(clientCert);  // Certificado do cliente
-  espClientForMQTT.setPrivateKey(privateKey);   // Chave privada do cliente
-                                                //#########################
-
+  espClientForMQTT.setCertificate(clientCert); 
+  espClientForMQTT.setPrivateKey(privateKey);   
+                                               
   // Configura o servidor MQTT
   mqttClient.setServer(MQTTSERVER, MQTTPORT);
 
@@ -78,17 +63,6 @@ void setup() {
 
   // Configura o tópico para assinatura
   mqttClient.setCallback(callback);
-
-  // Exemplo de JSON para inicialização
-  String json = R"(
-  {
-    "t": [
-      {"h": 23, "m": 30, "d": -1, "a": 1},
-      {"h": 6, "m": 30, "d": -1, "a": 0},
-      {"h": 10, "m": 00, "d": -1, "a": 2}
-    ]
-  })";
-  carregarTarefasJson(json);  // Carrega as tarefas iniciais
 
   readDHT22();
   umidadeAnterior = h;
@@ -141,5 +115,4 @@ void loop() {
 
   sendMQTT();
 
-  esp_task_wdt_reset(); // Watchdog
 }

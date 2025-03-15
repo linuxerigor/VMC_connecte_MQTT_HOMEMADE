@@ -20,7 +20,7 @@ DHT dht(DHTPIN, DHTTYPE);
 
 
 unsigned long tempoAnteriormqtt = 0;  // Variável para armazenar o último tempo registrado
-unsigned long intervalomqtt = 30000;  // Intervalo de 1 segundo (1000 milissegundos) send MQTT
+unsigned long intervalomqtt = 15000;  // Intervalo de 1 segundo (1000 milissegundos) send MQTT
 
 int ativar = 0;
 int ativarauto = 0;
@@ -102,73 +102,16 @@ void MQTT() {
   snprintf(message, sizeof(message), "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\",\"dt\":\"%s\"}", (int)h, (int)t, estadovmc, estadoturbo,buffer);
   mqttClient.publish(topic, message);
   Serial.println("publicado " + String(topic) + " = " + String(message));
-}
 
-// Função para imprimir as tarefas (debug)
-void imprimirTarefas() {
-  char topic[50];
-  snprintf(topic, sizeof(topic), "%s/data", mqttTopic);
-  char message[100];
-
-  Serial.println("Lista de Tarefas:");
-  for (int i = 0; i < tarefas.size(); i++) {
-    Serial.print("Tarefa ");
-    Serial.print(i);
-    Serial.print(": Hora = ");
-    Serial.print(tarefas[i].hora);
-    Serial.print(", Minuto = ");
-    Serial.print(tarefas[i].minuto);
-    Serial.print(", Dia = ");
-    Serial.println(tarefas[i].dia);
-    // Publicar mensagem
-
-    snprintf(message, sizeof(message), "Tarefa : Hora = %d, Minuto = %d, Dia = %d, Acao = %d", tarefas[i].hora, tarefas[i].minuto, tarefas[i].dia, tarefas[i].acao);
-    mqttClient.publish(topic, message);
-    Serial.println("publicado " + String(topic) + " = " + String(message));
-  }
+  esp_task_wdt_reset(); // Watchdog
 }
 
 
 // Função para adicionar tarefas dinamicamente
 void adicionarTarefa(int minuto, int hora, int dia, int acao) {
   Tarefa novaTarefa = { minuto, hora, dia, acao, false };
-  tarefas.push_back(novaTarefa);  // Adiciona ao vetor
+  tarefas.push_back(novaTarefa);  
 }
-
-// Função para limpar todas as tarefas
-void limparTarefas() {
-  tarefas.clear();  // Remove todas as tarefas do vetor
-}
-
-// Função para carregar tarefas do JSON
-void carregarTarefasJson(const String& jsonString) {
-  // Cria o buffer JSON
-  StaticJsonDocument<1024> doc;
-
-  // Analisa o JSON
-  DeserializationError erro = deserializeJson(doc, jsonString);
-  if (erro) {
-    Serial.print("Erro ao processar JSON: ");
-    Serial.println(erro.c_str());
-    return;
-  }
-
-  // Limpa as tarefas atuais
-  limparTarefas();
-
-  // Percorre o array JSON
-  JsonArray array = doc["t"].as<JsonArray>();
-  for (JsonObject obj : array) {
-    int hora = obj["h"];
-    int minuto = obj["m"];
-    int dia = obj["d"];
-    int acao = obj["a"];  // Define qual ação será executada
-    adicionarTarefa(minuto, hora, dia, acao);
-  }
-  Serial.println("Tarefas carregadas!");
-  imprimirTarefas();
-}
-
 
 void verificarHorarioDesligarLiga() {
 
@@ -258,34 +201,6 @@ void reconnectMQTT() {
   }
 }
 
-void readconfig(String mensagem) {
-
-  Serial.print("Config recebido no tópico  ");
-  Serial.print("Payload: ");
-  Serial.println(mensagem);
-
-  // Faz o parse do JSON
-  StaticJsonDocument<200> doc;  // Define tamanho máximo do JSON
-  DeserializationError error = deserializeJson(doc, mensagem);
-
-  if (error) {
-    Serial.print("Erro ao interpretar JSON: ");
-    Serial.println(error.c_str());
-    return;  // Sai da função em caso de erro
-  }
-
-  if (String(doc["chave"].as<String>()).equals("variacao_umidade")) {
-    variacao_umidade = doc["valor"];
-    Serial.printf("salvando config na memoria : %d\n", variacao_umidade);
-  } else if (String(doc["chave"].as<String>()).equals("intervaloLeituravariacao")) {
-    intervaloLeituravariacao = doc["valor"];
-    Serial.printf("salvando config na memoria : %d\n", intervaloLeituravariacao);
-  } else if (String(doc["chave"].as<String>()).equals("t")) {
-    carregarTarefasJson(doc["valor"]);  // Carrega as tarefas iniciais
-  }
-
-}
-
 // Função de callback para tratar as mensagens recebidas
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Mensagem recebida em [");
@@ -321,12 +236,4 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 
 
-  if (String(topic) == String(mqttTopic) + "/config") {
-    String mensagem = "";
-    for (int i = 0; i < length; i++) {
-      mensagem += (char)payload[i];
-    }
-
-    readconfig(mensagem);
-  }
 }

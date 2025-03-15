@@ -1,5 +1,3 @@
-
-
 #include <stdio.h>
 #include <Arduino.h>
 #include <DHT.h>
@@ -7,12 +5,12 @@
 #include <WiFiClientSecure.h>  
 #include <Adafruit_Sensor.h>
 #include <PubSubClient.h>
-#include <ArduinoJson.h>  // Biblioteca para manipulação de JSON
-#include <NTPClient.h>    // Biblioteca para sincronizar horário
-#include <WiFiUdp.h>      // Biblioteca para UDP
-#include <vector>         // Para vetor dinâmico
+#include <NTPClient.h>    
+#include <WiFiUdp.h>     
+#include <vector>        
 #include <ArduinoOTA.h>
-#include "esp_system.h"
+#include <esp_system.h>
+#include <esp_task_wdt.h>
 
 #include "config.h"
 
@@ -21,6 +19,7 @@
 #define RELAYPIN 16       // relais forte
 #define RELAYTOTALPIN 17  // relais total
 
+#define WDT_TIMEOUT 20  
 
 extern DHT dht;
 
@@ -73,18 +72,7 @@ void getdate(char* buffer, int tamanho);
 
 void MQTT();
 
-// Função para imprimir as tarefas (debug)
-void imprimirTarefas();
-
-
-// Função para adicionar tarefas dinamicamente
 void adicionarTarefa(int minuto, int hora, int dia, int acao);
-
-// Função para limpar todas as tarefas
-void limparTarefas();
-
-// Função para carregar tarefas do JSON
-void carregarTarefasJson(const String& jsonString);
 
 void verificarHorarioDesligarLiga();
 
@@ -92,10 +80,6 @@ void executarTarefaHorarioDesligarLiga(int horaAtual, int minutoAtual, int on);
 
 void readDHT22() ;
 
-
 void reconnectMQTT();
 
-void readconfig(String mensagem) ;
-
-// Função de callback para tratar as mensagens recebidas
 void callback(char* topic, byte* payload, unsigned int length);
