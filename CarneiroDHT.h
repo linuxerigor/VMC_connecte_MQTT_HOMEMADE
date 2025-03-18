@@ -11,6 +11,9 @@
 #include <ArduinoOTA.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+#include <Update.h>
 
 #include "config.h"
 
@@ -24,14 +27,10 @@
 extern DHT dht;
 
 extern int variacao_umidade;
-extern int intervaloLeituravariacao;
+extern int interval;
 extern float tolerancia_anterior;
 extern float umidadeAnterior;
-extern unsigned long tempoAnteriorvariacao;
-extern unsigned long tempoAnteriorreadDHT22;
-extern unsigned long tempoAnteriormqtt;
-extern unsigned long intervalomqtt;
-
+extern unsigned long millisprecedent;
 
 // Estrutura para as tarefas agendadas
 struct Tarefa {
@@ -51,16 +50,18 @@ extern int estadovmc;
 extern int estadoturbo;
 extern float t;
 extern float h;
-extern float hl;
 
 extern WiFiClientSecure espClientForMQTT;
 
 extern PubSubClient mqttClient;
 
-extern WiFiUDP ntpUDP;
-extern NTPClient timeClient;
-extern int timeZone;
+extern WebServer server;
 
+extern WiFiUDP ntpUDP;
+
+extern NTPClient timeClient;
+
+extern int timeZone;
 
 void ligadoturbo(int on);
 
@@ -70,16 +71,20 @@ void sendMQTT();
 
 void getdate(char* buffer, int tamanho);
 
-void MQTT();
-
 void adicionarTarefa(int minuto, int hora, int dia, int acao);
 
 void verificarHorarioDesligarLiga();
 
 void executarTarefaHorarioDesligarLiga(int horaAtual, int minutoAtual, int on);
 
+void majhumiditeprecedent() ;
+
 void readDHT22() ;
 
+void restartDHT22();
+
 void reconnectMQTT();
+
+void startwebserver();
 
 void callback(char* topic, byte* payload, unsigned int length);

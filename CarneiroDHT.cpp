@@ -1,14 +1,12 @@
-
 #include "CarneiroDHT.h"
 
-int variacao_umidade = 4;               // Variação brusca (em porcentagem)
-int intervaloLeituravariacao = 150000;  //60000; // Tempo entre leituras
+int variacao_umidade = 4;                // Variation (en percentage)
+int interval = 15000;                   // en millseconds
+unsigned long millisprecedent = 0;
+//--------------------------------------------------------------------------
 
 float tolerancia_anterior = 0.0;  // umidade inicial
 float umidadeAnterior = 0.0;      // Armazena a última leitura de umidade
-unsigned long tempoAnteriorvariacao = 0;
-unsigned long tempoAnteriorreadDHT22 = 0;
-
 
 // Vetor dinâmico para armazenar as tarefas
 std::vector<Tarefa> tarefas;
@@ -19,9 +17,6 @@ std::vector<Tarefa> tarefas;
 DHT dht(DHTPIN, DHTTYPE);
 
 
-unsigned long tempoAnteriormqtt = 0;  // Variável para armazenar o último tempo registrado
-unsigned long intervalomqtt = 15000;  // Intervalo de 1 segundo (1000 milissegundos) send MQTT
-
 int ativar = 0;
 int ativarauto = 0;
 
@@ -31,11 +26,13 @@ int estadoturbo = 0;
 // current temperature & humidity, updated in loop()
 float t = 0.0;
 float h = 0.0;
-float hl = 0.0;
+
 
 WiFiClientSecure espClientForMQTT;  // wIth SSL ESP32
 
 PubSubClient mqttClient(espClientForMQTT);
+
+WebServer server(80);
 
 // Configuração do cliente NTP
 WiFiUDP ntpUDP;
@@ -52,7 +49,7 @@ void ligadoturbo(int on) {
     ligadovmc(!on);
   }
 
-  MQTT();
+  sendMQTT();
 }
 
 void ligadovmc(int on) {
@@ -64,19 +61,10 @@ void ligadovmc(int on) {
     ligadoturbo(0);
   }
 
-  MQTT();
+  sendMQTT();
 }
 
-void sendMQTT() {
-  if (millis() - tempoAnteriormqtt >= intervalomqtt) {
-    // Ação a ser realizada após o intervalo (1 segundo)
-    tempoAnteriormqtt = millis();  // Atualiza o último tempo registrado
-    if (hl != h) {
-      hl = h;
-      MQTT();
-    }
-  }
-}
+
 
 void getdate(char* buffer, int tamanho) {
     timeClient.update(); // Atualiza o tempo do NTP
@@ -90,7 +78,7 @@ void getdate(char* buffer, int tamanho) {
 
 }
 
-void MQTT() {
+void sendMQTT() {
   char buffer[50];
   getdate(buffer, sizeof(buffer));
 
@@ -98,9 +86,9 @@ void MQTT() {
   char topic[50];
   snprintf(topic, sizeof(topic), "%s/data", mqttTopic);
   char message[100];
-  snprintf(message, sizeof(message), "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\",\"dt\":\"%s\"}", (int)h, (int)t, estadovmc, estadoturbo,buffer);
+  snprintf(message, sizeof(message), "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\",\"d\":\"%s\"}", (int)h, (int)t, estadovmc, estadoturbo,buffer);
   mqttClient.publish(topic, message);
-  Serial.println("publicado " + String(topic) + " = " + String(message));
+  Serial.println("publish " + String(topic) + " = " + String(message));
 
 }
 
@@ -142,37 +130,50 @@ void verificarHorarioDesligarLiga() {
 }
 
 void executarTarefaHorarioDesligarLiga(int horaAtual, int minutoAtual, int on) {
-  // Exibe o horário no monitor serial
-  Serial.print("Horário atual: ");
-  Serial.print(horaAtual);
-  Serial.print(":");
-  Serial.println(minutoAtual);
+  Serial.println("executarTarefaHorarioDesligarLiga");
+
   if (on == 0||on == 1) {
      ligadovmc(on);
   }
   if (on == 2 ) {
      esp_restart(); 
   }
+  
+}
+
+
+
+void majhumiditeprecedent() {
+      // Atualiza o valor anterior da umidade
+    if ((h - umidadeAnterior) > variacao_umidade) {
+      Serial.printf("Variação brusca detectada! (%f - %f) > %d \n", h, umidadeAnterior, variacao_umidade);
+      ligadoturbo(1);
+      ativarauto = 1;
+      tolerancia_anterior = umidadeAnterior;  // * 1.01;
+    }
+    umidadeAnterior = h;
 }
 
 void readDHT22() {
-  if (millis() - tempoAnteriorreadDHT22 > 2000) {
-
-        verificarHorarioDesligarLiga();
-
-        tempoAnteriorreadDHT22 = millis();
-        float newT = dht.readTemperature(), newH = dht.readHumidity();
-        if (!isnan(newT)) t = newT;
-        if (!isnan(newH)) h = newH;
+        
+    float newT = dht.readTemperature(), newH = dht.readHumidity();
       
-        if (isnan(newT)){
-          digitalWrite(DHTPINP, LOW);  
-          delay(1000);  
-          digitalWrite(DHTPINP, HIGH);  
-          delay(1000);  
-          Serial.println("Error lendo DHT, reiniciando");
-        }
-  }
+    if (isnan(newT)){
+      restartDHT22();
+    }
+
+    if (!isnan(newT)) t = newT;
+    if (!isnan(newH)) h = newH;
+
+}
+
+void restartDHT22() {
+    digitalWrite(DHTPINP, LOW);  
+    delay(1000);  
+    digitalWrite(DHTPINP, HIGH);  
+    delay(1000);  
+    Serial.println("Error lendo DHT, reiniciando");
+  
 }
 
 
@@ -197,6 +198,45 @@ void reconnectMQTT() {
     Serial.println(mqttClient.state());
     delay(5000);
   }
+}
+
+void startwebserver(){
+  Serial.println("startwebserver()");
+
+  if (!MDNS.begin("esp32")) {
+    Serial.println("Erro ao iniciar mDNS");
+  }
+
+  server.on("/", HTTP_GET, []() {
+    server.send(200, "text/html",
+      "<form method='POST' action='/update' enctype='multipart/form-data'>"
+      "<input type='file' name='update'>"
+      "<input type='submit' value='Atualizar'>"
+      "</form>");
+  });
+
+  server.on("/update", HTTP_POST, []() {
+    server.sendHeader("Connection", "close");
+    server.send(200, "text/plain", (Update.hasError()) ? "Falha" : "Sucesso");
+    ESP.restart();
+  }, []() {
+    HTTPUpload& upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+      Update.begin();
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+      Update.write(upload.buf, upload.currentSize);
+    } else if (upload.status == UPLOAD_FILE_END) {
+      if (Update.end(true)) {
+        Serial.println("Atualização concluída");
+      } else {
+        Serial.println("Erro na atualização");
+      }
+    }
+  });
+
+  server.begin();
+
+
 }
 
 // Função de callback para tratar as mensagens recebidas

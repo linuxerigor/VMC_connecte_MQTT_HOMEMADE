@@ -38,18 +38,18 @@ void setup() {
   Serial.println(WiFi.localIP());
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
   ArduinoOTA.setTimeout(30000);
   ArduinoOTA.begin();
 
-  Serial.printf("variacao_umidade: %d\n", variacao_umidade);
-  Serial.printf("intervaloLeituravariacao: %d\n\n", intervaloLeituravariacao);
-
+  startwebserver();
 
   adicionarTarefa(30, 23, -1, 1);
   adicionarTarefa(30, 6, -1, 0);
   adicionarTarefa(30, 9, -1, 2);
   adicionarTarefa(30, 15, -1, 2);
+  Serial.println("adicionarTarefa()");
 
   // Inicializa o cliente NTP
   timeClient.begin();
@@ -57,20 +57,17 @@ void setup() {
 
 
   // Configura o certificado raiz SSL/TLS (ESP32)
+  Serial.println("espClientForMQTT()");
   espClientForMQTT.setCACert(rootCACert);
   espClientForMQTT.setCertificate(clientCert); 
   espClientForMQTT.setPrivateKey(privateKey);   
                                                
   // Configura o servidor MQTT
   mqttClient.setServer(MQTTSERVER, MQTTPORT);
-
-  mqttClient.setKeepAlive(60);      // Tempo em segundos
-  mqttClient.setSocketTimeout(10);  // 10 segundos
-
-  // Configura o tópico para assinatura
+  mqttClient.setKeepAlive(60); 
+  mqttClient.setSocketTimeout(10);
   mqttClient.setCallback(callback);
 
-  readDHT22();
   umidadeAnterior = h;
   tolerancia_anterior = h;
 
@@ -79,6 +76,7 @@ void setup() {
 
 void loop() {
    
+  
   // wait for WiFi connection
   if ((WiFi.status() != WL_CONNECTED)) {
     Serial.println("Reconnecting to WIFI network");
@@ -90,38 +88,38 @@ void loop() {
 
   ArduinoOTA.handle();
 
-  readDHT22();
-
-  // Atualiza o valor anterior da umidade
-  if (millis() - tempoAnteriorvariacao > intervaloLeituravariacao) {
-    Serial.println("Verifica variação brusca ...");
-    tempoAnteriorvariacao = millis();
-    if ((h - umidadeAnterior) > variacao_umidade) {
-      Serial.printf("Variação brusca detectada! (%f - %f) > %d \n", h, umidadeAnterior, variacao_umidade);
-      ligadoturbo(1);
-      ativarauto = 1;
-      tolerancia_anterior = umidadeAnterior;  // * 1.01;
-    }
-    umidadeAnterior = h;
-  }
-
-
-  if (ativarauto && h <= (tolerancia_anterior)) {
-    Serial.println("Umidade retornour patamar anterior!");
-    ligadoturbo(0);
-    tolerancia_anterior = h;
-    ativarauto = 0;
-  }
-  ////////////////////////////////////////////////////////
-
-  // Conecta-se ao broker MQTT
-  if (!mqttClient.connected()) {
-    reconnectMQTT();
-  }
-  // Processa mensagens MQTT
   mqttClient.loop();
+  
+  if (millis() - millisprecedent > interval) {
+    
+    millisprecedent = millis();
+    Serial.println("run ...");
 
-  sendMQTT();
+    readDHT22();
+    
+    verificarHorarioDesligarLiga();
+
+    majhumiditeprecedent();
+
+
+    if (ativarauto && h <= (tolerancia_anterior)) {
+      Serial.println("Umidade retornour patamar anterior!");
+      ligadoturbo(0);
+      tolerancia_anterior = h;
+      ativarauto = 0;
+    }
+
+    if (!mqttClient.connected()) {
+      reconnectMQTT();
+    }
+
+    sendMQTT();
+
+    Serial.println("fin ...");
+  }
+
+  server.handleClient();
 
   esp_task_wdt_reset(); // Watchdog
+
 }
