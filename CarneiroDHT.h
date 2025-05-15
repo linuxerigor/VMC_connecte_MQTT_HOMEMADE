@@ -30,7 +30,9 @@ extern int variacao_umidade;
 extern int interval;
 extern float tolerancia_anterior;
 extern float umidadeAnterior;
+extern unsigned long millisactuel;
 extern unsigned long millisprecedent;
+extern unsigned long millisprecedentvariation;
 
 // Estrutura para as tarefas agendadas
 struct Tarefa {

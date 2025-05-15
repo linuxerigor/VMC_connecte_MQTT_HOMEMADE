@@ -68,6 +68,7 @@ void setup() {
   mqttClient.setSocketTimeout(10);
   mqttClient.setCallback(callback);
 
+  readDHT22();
   umidadeAnterior = h;
   tolerancia_anterior = h;
 
@@ -99,7 +100,11 @@ void loop() {
     
     verificarHorarioDesligarLiga();
 
-    majhumiditeprecedent();
+    millisactuel = millis();
+    if ((millisactuel - millisprecedentvariation) >= 150000) {
+        millisprecedentvariation = millisactuel;
+        majhumiditeprecedent();
+    }
 
 
     if (ativarauto && h <= (tolerancia_anterior)) {

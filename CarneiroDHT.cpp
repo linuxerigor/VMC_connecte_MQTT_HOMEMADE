@@ -2,7 +2,10 @@
 
 int variacao_umidade = 4;                // Variation (en percentage)
 int interval = 15000;                   // en millseconds
+unsigned long millisactuel = 0;
 unsigned long millisprecedent = 0;
+unsigned long millisprecedentvariation = 0;
+
 //--------------------------------------------------------------------------
 
 float tolerancia_anterior = 0.0;  // umidade inicial
@@ -149,7 +152,8 @@ void majhumiditeprecedent() {
       Serial.printf("Variação brusca detectada! (%f - %f) > %d \n", h, umidadeAnterior, variacao_umidade);
       ligadoturbo(1);
       ativarauto = 1;
-      tolerancia_anterior = umidadeAnterior;  // * 1.01;
+      tolerancia_anterior = umidadeAnterior + 1.0 ; // *1.01;
+      Serial.printf("(tolerancia_anterior = %f  umidadeAnterior = %f)\n", tolerancia_anterior, umidadeAnterior);
     }
     umidadeAnterior = h;
 }
