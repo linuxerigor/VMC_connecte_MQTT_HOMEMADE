@@ -164,6 +164,7 @@ void readDHT22() {
       
     if (isnan(newT)){
       restartDHT22();
+      esp_restart();
     }
 
     if (!isnan(newT)) t = newT;
@@ -201,6 +202,7 @@ void reconnectMQTT() {
     Serial.print("Falha, rc=");
     Serial.println(mqttClient.state());
     delay(5000);
+    esp_restart();
   }
 }
 
@@ -222,7 +224,8 @@ void startwebserver(){
   server.on("/update", HTTP_POST, []() {
     server.sendHeader("Connection", "close");
     server.send(200, "text/plain", (Update.hasError()) ? "Falha" : "Sucesso");
-    ESP.restart();
+    esp_restart();
+    
   }, []() {
     HTTPUpload& upload = server.upload();
     if (upload.status == UPLOAD_FILE_START) {
@@ -263,6 +266,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     } else if ((char)payload[0] == '0') {
 
       ligadoturbo(0);
+      esp_restart();
     }
   }
 
@@ -274,6 +278,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
     } else if ((char)payload[0] == '0') {
 
       ligadovmc(0);
+      esp_restart();
+    
     }
   }
 

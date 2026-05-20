@@ -48,6 +48,7 @@ void setup() {
   adicionarTarefa(30, 23, -1, 1);
   adicionarTarefa(30, 6, -1, 0);
   adicionarTarefa(30, 9, -1, 2);
+  adicionarTarefa(30, 12, -1, 2);
   adicionarTarefa(30, 15, -1, 2);
   Serial.println("adicionarTarefa()");
 
