@@ -1,131 +1,136 @@
 #include "CarneiroDHT.h"
 
-
 void setup() {
+  pinMode(RELAYPIN, OUTPUT);
+  pinMode(RELAYTOTALPIN, OUTPUT);
 
-  pinMode(RELAYPIN, OUTPUT);       // définit la broche du relais en sortie
-  pinMode(RELAYTOTALPIN, OUTPUT);  // définit la broche du relais en sortie
-  
-  digitalWrite(RELAYPIN, 0);       // 0 = rele desligado, turbo desligado
-  digitalWrite(RELAYTOTALPIN, 0);  // 0 = rele desligado, VMC LIGADO
+  digitalWrite(RELAYPIN, 0);      // turbo OFF
+  digitalWrite(RELAYTOTALPIN, 0); // VMC OFF
 
   pinMode(DHTPINP, OUTPUT);
-  digitalWrite(DHTPINP, 1);  
+  digitalWrite(DHTPINP, 1); // Alimentation DHT active
 
   Serial.begin(115200);
+  delay(500);
+  Serial.println("\n=== Demarrage ===");
 
-    // Configura o Watchdog Timer (WDT)
-    esp_task_wdt_config_t wdtConfig = {
-        .timeout_ms = WDT_TIMEOUT * 1000,  // Converte segundos para milissegundos
-        .idle_core_mask = 0,  // Desabilita monitoramento de núcleos ociosos
-        .trigger_panic = true,  // Reinicia o ESP32 se travar
-    };
+  // Heap libre au démarrage — utile pour détecter les fuites mémoire
+  Serial.printf("Heap libre: %d bytes\n", esp_get_free_heap_size());
 
-  // Watchdog
+  // Watchdog : 30 s pour couvrir les délais SSL/TLS et NTP
+  esp_task_wdt_config_t wdtConfig = {
+    .timeout_ms    = WDT_TIMEOUT * 1000,
+    .idle_core_mask = 0,
+    .trigger_panic  = true,
+  };
   esp_task_wdt_init(&wdtConfig);
   esp_task_wdt_add(NULL);
 
   dht.begin();
 
+  // Connexion WiFi
+  Serial.print("Connexion WiFi");
   WiFi.begin(STASSID, STAPSK);
-
   while (WiFi.status() != WL_CONNECTED) {
+    esp_task_wdt_reset();
     delay(500);
     Serial.print(".");
   }
-  Serial.println("");
-  Serial.print("Connected! IP address: ");
-  Serial.println(WiFi.localIP());
+  Serial.printf("\nWiFi connecte, IP : %s\n", WiFi.localIP().toString().c_str());
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
-  ArduinoOTA.setTimeout(30000);
-  ArduinoOTA.begin();
+  // Tâches planifiées
+  adicionarTarefa(30, 23, -1, 1); // VMC ON  à 23h30
+  adicionarTarefa(30,  6, -1, 0); // VMC OFF à 6h30
+  adicionarTarefa(30,  9, -1, 2); // Reboot  à 9h30
+  adicionarTarefa(30, 12, -1, 2); // Reboot  à 12h30
+  adicionarTarefa(30, 15, -1, 2); // Reboot  à 15h30
+  Serial.println("Taches planifiees ajoutees");
 
-  startwebserver();
-
-  adicionarTarefa(30, 23, -1, 1);
-  adicionarTarefa(30, 6, -1, 0);
-  adicionarTarefa(30, 9, -1, 2);
-  adicionarTarefa(30, 12, -1, 2);
-  adicionarTarefa(30, 15, -1, 2);
-  Serial.println("adicionarTarefa()");
-
-  // Inicializa o cliente NTP
+  // NTP
   timeClient.begin();
-  timeClient.setTimeOffset(timeZone * 3600);  // Define o fuso horário
+  timeClient.setTimeOffset(timeZone * 3600);
+  esp_task_wdt_reset();
 
-
-  // Configura o certificado raiz SSL/TLS (ESP32)
-  Serial.println("espClientForMQTT()");
+  // SSL/TLS pour MQTT (AWS IoT)
+  Serial.println("Configuration SSL...");
   espClientForMQTT.setCACert(rootCACert);
-  espClientForMQTT.setCertificate(clientCert); 
-  espClientForMQTT.setPrivateKey(privateKey);   
-                                               
-  // Configura o servidor MQTT
+  espClientForMQTT.setCertificate(clientCert);
+  espClientForMQTT.setPrivateKey(privateKey);
+  esp_task_wdt_reset();
+
+  // MQTT
   mqttClient.setServer(MQTTSERVER, MQTTPORT);
-  mqttClient.setKeepAlive(60); 
-  mqttClient.setSocketTimeout(10);
+  mqttClient.setKeepAlive(60);
+  mqttClient.setSocketTimeout(15);
   mqttClient.setCallback(callback);
 
+  // Première lecture DHT
   readDHT22();
-  umidadeAnterior = h;
+  umidadeAnterior    = h;
   tolerancia_anterior = h;
 
-  esp_task_wdt_reset(); // Watchdog
+  esp_task_wdt_reset();
+  Serial.printf("Setup termine. Heap libre: %d bytes\n", esp_get_free_heap_size());
 }
 
 void loop() {
-   
-  
-  // wait for WiFi connection
-  if ((WiFi.status() != WL_CONNECTED)) {
-    Serial.println("Reconnecting to WIFI network");
+
+  // --- Reconnexion WiFi non bloquante ---
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi perdu, reconnexion...");
     WiFi.disconnect();
-    WiFi.reconnect();
-    delay(5000);
+    WiFi.begin(STASSID, STAPSK);
+    for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
+      esp_task_wdt_reset();
+      delay(500);
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("WiFi toujours indisponible");
+    }
     return;
   }
 
-  ArduinoOTA.handle();
+  // --- Reconnexion MQTT si nécessaire ---
+  if (!mqttClient.connected()) {
+    reconnectMQTT();
+    esp_task_wdt_reset();
+  }
 
   mqttClient.loop();
-  
-  if (millis() - millisprecedent > interval) {
-    
+
+  // --- Cycle principal toutes les `interval` ms ---
+  if (millis() - millisprecedent >= (unsigned long)interval) {
     millisprecedent = millis();
-    Serial.println("run ...");
+
+    // Affiche la heap à chaque cycle pour surveiller les fuites mémoire
+    Serial.printf("--- Cycle  Heap libre: %d bytes ---\n", esp_get_free_heap_size());
 
     readDHT22();
-    
-    verificarHorarioDesligarLiga();
 
+    verificarHorarioDesligarLiga();
+    esp_task_wdt_reset();
+
+    // Contrôle de variation d'humidité toutes les 150 s
     millisactuel = millis();
-    if ((millisactuel - millisprecedentvariation) >= 150000) {
-        millisprecedentvariation = millisactuel;
-        majhumiditeprecedent();
+    if ((millisactuel - millisprecedentvariation) >= 150000UL) {
+      millisprecedentvariation = millisactuel;
+      majhumiditeprecedent();
     }
 
-
-    if (ativarauto && h <= (tolerancia_anterior)) {
-      Serial.println("Umidade retornour patamar anterior!");
+    // Retour au niveau d'humidité normal → arrêt turbo automatique
+    if (ativarauto && h <= tolerancia_anterior) {
+      Serial.println("Humidite revenue, arret turbo");
       ligadoturbo(0);
       tolerancia_anterior = h;
       ativarauto = 0;
     }
 
-    if (!mqttClient.connected()) {
-      reconnectMQTT();
-    }
-
     sendMQTT();
-
-    Serial.println("fin ...");
+    Serial.println("--- Fin cycle ---");
   }
 
-  server.handleClient();
-
-  esp_task_wdt_reset(); // Watchdog
-
+  esp_task_wdt_reset();
 }
