@@ -83,8 +83,8 @@ void sendMQTT() {
 
   char message[150];
   snprintf(message, sizeof(message),
-           "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\",\"d\":\"%s\"}",
-           (int)h, (int)t, estadovmc, estadoturbo, buffer);
+           "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\",\"d\":\"%s\",\"heap\":\"%d\"}",
+           (int)h, (int)t, estadovmc, estadoturbo, buffer, esp_get_free_heap_size());
 
   if (mqttClient.publish(topic, message)) {
     Serial.printf("publish %s = %s\n", topic, message);
