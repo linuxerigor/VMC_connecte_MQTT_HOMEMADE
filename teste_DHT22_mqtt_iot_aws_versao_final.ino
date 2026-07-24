@@ -13,11 +13,9 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n=== Demarrage ===");
+  Serial.printf("Heap libre au boot: %d bytes\n", esp_get_free_heap_size());
 
-  // Heap libre au démarrage — utile pour détecter les fuites mémoire
-  Serial.printf("Heap libre: %d bytes\n", esp_get_free_heap_size());
-
-  // Watchdog : 30 s pour couvrir les délais SSL/TLS et NTP
+  // Watchdog 30s
   esp_task_wdt_config_t wdtConfig = {
     .timeout_ms    = WDT_TIMEOUT * 1000,
     .idle_core_mask = 0,
@@ -36,22 +34,11 @@ void setup() {
     delay(500);
     Serial.print(".");
   }
-  Serial.printf("\nWiFi connecte, IP : %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("\nWiFi connecte IP: %s\n", WiFi.localIP().toString().c_str());
   WiFi.setAutoReconnect(true);
   WiFi.persistent(true);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
-  // Tâches planifiées
-  adicionarTarefa(30, 23, -1, 1); // VMC ON  à 23h30
-  adicionarTarefa(30,  6, -1, 0); // VMC OFF à 6h30
-  adicionarTarefa(30,  9, -1, 2); // Reboot  à 9h30
-  adicionarTarefa(30, 12, -1, 2); // Reboot  à 12h30
-  adicionarTarefa(30, 15, -1, 2); // Reboot  à 15h30
-  Serial.println("Taches planifiees ajoutees");
-
-  // NTP
-  timeClient.begin();
-  timeClient.setTimeOffset(timeZone * 3600);
   esp_task_wdt_reset();
 
   // SSL/TLS pour MQTT (AWS IoT)
@@ -73,7 +60,7 @@ void setup() {
   tolerancia_anterior = h;
 
   esp_task_wdt_reset();
-  Serial.printf("Setup termine. Heap libre: %d bytes\n", esp_get_free_heap_size());
+  Serial.printf("=== Setup termine. Heap: %d bytes ===\n", esp_get_free_heap_size());
 }
 
 void loop() {
@@ -88,7 +75,7 @@ void loop() {
       delay(500);
     }
     if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("WiFi toujours indisponible");
+      Serial.println("WiFi indisponible, prochain cycle");
     }
     return;
   }
@@ -97,23 +84,25 @@ void loop() {
   if (!mqttClient.connected()) {
     reconnectMQTT();
     esp_task_wdt_reset();
+    return; // on attend le prochain tour de loop pour envoyer
   }
 
+  // --- Traitement des actions MQTT reçues (hors callback) ---
+  // Doit être appelé AVANT mqttClient.loop() pour traiter le cycle précédent,
+  // et APRÈS pour traiter le cycle actuel — on le met après pour simplicité
   mqttClient.loop();
+  processPendingActions();  // ← ici, on est hors de mqttClient.loop(), pas de récursion
 
   // --- Cycle principal toutes les `interval` ms ---
   if (millis() - millisprecedent >= (unsigned long)interval) {
     millisprecedent = millis();
 
-    // Affiche la heap à chaque cycle pour surveiller les fuites mémoire
-    Serial.printf("--- Cycle  Heap libre: %d bytes ---\n", esp_get_free_heap_size());
+    Serial.printf("--- Cycle  Heap: %d bytes ---\n", esp_get_free_heap_size());
 
     readDHT22();
-
-    verificarHorarioDesligarLiga();
     esp_task_wdt_reset();
 
-    // Contrôle de variation d'humidité toutes les 150 s
+    // Contrôle variation humidité toutes les 150s
     millisactuel = millis();
     if ((millisactuel - millisprecedentvariation) >= 150000UL) {
       millisprecedentvariation = millisactuel;

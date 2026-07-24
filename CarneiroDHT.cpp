@@ -5,12 +5,17 @@ int interval = 15000;
 unsigned long millisactuel = 0;
 unsigned long millisprecedent = 0;
 unsigned long millisprecedentvariation = 0;
+unsigned long millisLastNTP = 0;   // Timestamp de la dernière mise à jour NTP réussie
 
 float tolerancia_anterior = 0.0;
 float umidadeAnterior = 0.0;
 
 int dhtErrorCount = 0;
 int mqttRetryCount = 0;
+
+// Actions différées depuis le callback — évite la récursion dans mqttClient.loop()
+volatile int pendingTurbo = -1;
+volatile int pendingVMC   = -1;
 
 std::vector<Tarefa> tarefas;
 
@@ -29,7 +34,9 @@ WiFiClientSecure espClientForMQTT;
 PubSubClient mqttClient(espClientForMQTT);
 
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org", 3600, 60000);
+// Intervalle NTP mis à 0 ici — on gère nous-mêmes la fréquence de mise à jour
+// pour éviter les blocages UDP imprévisibles
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 3600, 0);
 int timeZone = 1;
 
 // ---------------------------------------------------------------------------
@@ -37,12 +44,14 @@ int timeZone = 1;
 void ligadoturbo(int on) {
   ativar = on;
   estadoturbo = on;
-  // Utilisation de printf au lieu de String() — évite la fragmentation heap
   Serial.printf("Rele ligado turbo = %d\n", on);
   digitalWrite(RELAYPIN, on);
 
+  // Si turbo ON et VMC ON → éteindre VMC (sans récursion : appel direct)
   if (on == 1 && estadovmc == 1) {
-    ligadovmc(0);
+    digitalWrite(RELAYTOTALPIN, 0);
+    estadovmc = 0;
+    Serial.println("VMC eteint pour turbo");
   }
 
   sendMQTT();
@@ -53,8 +62,12 @@ void ligadovmc(int on) {
   estadovmc = on;
   Serial.printf("Rele ligado VMC = %d\n", on);
 
+  // Si VMC ON et turbo ON → éteindre turbo (sans récursion : appel direct)
   if (on == 1 && estadoturbo == 1) {
-    ligadoturbo(0);
+    digitalWrite(RELAYPIN, 0);
+    ativar = 0;
+    estadoturbo = 0;
+    Serial.println("Turbo eteint pour VMC");
   }
 
   sendMQTT();
@@ -71,20 +84,18 @@ void getdate(char* buffer, int tamanho) {
 
 void sendMQTT() {
   if (!mqttClient.connected()) {
-    Serial.println("sendMQTT: client non connecte, message ignore");
+    Serial.println("sendMQTT: non connecte, ignore");
     return;
   }
 
-  char buffer[50];
-  getdate(buffer, sizeof(buffer));
 
   char topic[60];
   snprintf(topic, sizeof(topic), "%s/data", mqttTopic);
 
   char message[150];
   snprintf(message, sizeof(message),
-           "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\",\"d\":\"%s\",\"heap\":\"%d\"}",
-           (int)h, (int)t, estadovmc, estadoturbo, buffer, esp_get_free_heap_size());
+    "{\"h\":\"%d\",\"t\":\"%d\",\"estadovmc\":\"%d\",\"estadoturbo\":\"%d\"}",
+    (int)h, (int)t, estadovmc, estadoturbo);
 
   if (mqttClient.publish(topic, message)) {
     Serial.printf("publish %s = %s\n", topic, message);
@@ -101,8 +112,19 @@ void adicionarTarefa(int minuto, int hora, int dia, int acao) {
 }
 
 void verificarHorarioDesligarLiga() {
-  // Update NTP — non bloquant si déjà synchronisé (utilise le cache interne)
-  timeClient.update();
+  // Mise à jour NTP toutes les NTP_UPDATE_INTERVAL_MS seulement
+  // pour éviter un blocage UDP aléatoire à chaque cycle de 15s
+  unsigned long now = millis();
+  if (now - millisLastNTP >= NTP_UPDATE_INTERVAL_MS || millisLastNTP == 0) {
+    bool ok = timeClient.forceUpdate();  // timeout interne de 1s
+    if (ok) {
+      millisLastNTP = now;
+      Serial.println("NTP mis a jour");
+    } else {
+      Serial.println("NTP timeout, on garde l heure precedente");
+      // Pas de blocage : on continue avec l'heure mémorisée
+    }
+  }
 
   int horaAtual   = timeClient.getHours();
   int minutoAtual = timeClient.getMinutes();
@@ -128,14 +150,8 @@ void verificarHorarioDesligarLiga() {
 
 void executarTarefaHorarioDesligarLiga(int horaAtual, int minutoAtual, int on) {
   Serial.printf("executarTarefa hora=%d min=%d acao=%d\n", horaAtual, minutoAtual, on);
-
-  if (on == 0 || on == 1) {
-    ligadovmc(on);
-  }
-  if (on == 2) {
-    Serial.println("Redemarrage planifie");
-    esp_restart();
-  }
+  if (on == 0 || on == 1) ligadovmc(on);
+  if (on == 2) { Serial.println("Redemarrage planifie"); esp_restart(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -146,13 +162,11 @@ void majhumiditeprecedent() {
     ligadoturbo(1);
     ativarauto = 1;
     tolerancia_anterior = umidadeAnterior + 1.0;
-    Serial.printf("tolerancia_anterior=%.1f umidadeAnterior=%.1f\n", tolerancia_anterior, umidadeAnterior);
   }
   umidadeAnterior = h;
 }
 
 void readDHT22() {
-  // Petite pause recommandée par le datasheet DHT22 entre deux lectures
   delay(100);
   float newT = dht.readTemperature();
   float newH = dht.readHumidity();
@@ -165,7 +179,7 @@ void readDHT22() {
       Serial.println("Trop d erreurs DHT, redemarrage");
       esp_restart();
     }
-    return; // conserve les dernières valeurs valides
+    return;
   }
 
   dhtErrorCount = 0;
@@ -192,7 +206,6 @@ void reconnectMQTT() {
 
   Serial.printf("Tentative MQTT (%d/%d)...\n", mqttRetryCount + 1, MQTT_MAX_RETRIES);
 
-  // clientID statique — évite une allocation String à chaque reconnexion
   char clientID[30];
   snprintf(clientID, sizeof(clientID), "ESP32-%llX", ESP.getEfuseMac());
 
@@ -207,7 +220,6 @@ void reconnectMQTT() {
     mqttClient.subscribe(topic);
     snprintf(topic, sizeof(topic), "%s/config", mqttTopic);
     mqttClient.subscribe(topic);
-
   } else {
     mqttRetryCount++;
     Serial.printf("Echec MQTT rc=%d (%d/%d)\n", mqttClient.state(), mqttRetryCount, MQTT_MAX_RETRIES);
@@ -215,9 +227,23 @@ void reconnectMQTT() {
 }
 
 // ---------------------------------------------------------------------------
+// Traitement différé des actions reçues par MQTT callback
+// Appelé dans loop(), HORS de mqttClient.loop() → pas de récursion possible
+void processPendingActions() {
+  if (pendingTurbo >= 0) {
+    int val = pendingTurbo;
+    pendingTurbo = -1;  // reset avant l'appel pour éviter double exécution
+    ligadoturbo(val);
+  }
+  if (pendingVMC >= 0) {
+    int val = pendingVMC;
+    pendingVMC = -1;
+    ligadovmc(val);
+  }
+}
 
+// Le callback ne fait QUE mémoriser l'action demandée — aucun appel réseau ici
 void callback(char* topic, byte* payload, unsigned int length) {
-  // Buffer local pour éviter de modifier le payload original
   char msg[8] = {0};
   size_t len = length < sizeof(msg) - 1 ? length : sizeof(msg) - 1;
   memcpy(msg, payload, len);
@@ -229,12 +255,12 @@ void callback(char* topic, byte* payload, unsigned int length) {
   snprintf(topicVMC,   sizeof(topicVMC),   "%s/ligadovmc",   mqttTopic);
 
   if (strcmp(topic, topicTurbo) == 0) {
-    if (msg[0] == '1')      ligadoturbo(1);
-    else if (msg[0] == '0') ligadoturbo(0);
+    if      (msg[0] == '1') pendingTurbo = 1;
+    else if (msg[0] == '0') pendingTurbo = 0;
   }
 
   if (strcmp(topic, topicVMC) == 0) {
-    if (msg[0] == '1')      ligadovmc(1);
-    else if (msg[0] == '0') ligadovmc(0);
+    if      (msg[0] == '1') pendingVMC = 1;
+    else if (msg[0] == '0') pendingVMC = 0;
   }
 }

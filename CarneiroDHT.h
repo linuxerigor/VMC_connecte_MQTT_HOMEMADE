@@ -13,19 +13,18 @@
 
 #include "config.h"
 
-#define DHTPIN 23
-#define DHTPINP 14
-#define RELAYPIN 16
+#define DHTPIN        23
+#define DHTPINP       14
+#define RELAYPIN      16
 #define RELAYTOTALPIN 17
 
-// WDT: 30s, largement suffisant pour couvrir les délais SSL/TLS et NTP
-#define WDT_TIMEOUT 30
-
-// Nombre maximum d'échecs DHT consécutifs avant de redémarrer
-#define DHT_MAX_ERRORS 5
-
-// Nombre maximum d'échecs MQTT consécutifs avant de redémarrer
+#define WDT_TIMEOUT    30   // secondes
+#define DHT_MAX_ERRORS  5
 #define MQTT_MAX_RETRIES 3
+
+// Intervalle NTP : mise à jour toutes les 10 minutes seulement
+// évite les blocages UDP répétés
+#define NTP_UPDATE_INTERVAL_MS 600000UL
 
 extern DHT dht;
 
@@ -36,9 +35,15 @@ extern float umidadeAnterior;
 extern unsigned long millisactuel;
 extern unsigned long millisprecedent;
 extern unsigned long millisprecedentvariation;
+extern unsigned long millisLastNTP;
 
 extern int dhtErrorCount;
 extern int mqttRetryCount;
+
+// Flag pour différer les actions du callback hors de mqttClient.loop()
+// Evite toute récursion callback → sendMQTT → mqttClient
+extern volatile int pendingTurbo;   // -1 = rien, 0 = OFF, 1 = ON
+extern volatile int pendingVMC;     // -1 = rien, 0 = OFF, 1 = ON
 
 struct Tarefa {
   int minuto;
@@ -74,4 +79,5 @@ void majhumiditeprecedent();
 void readDHT22();
 void restartDHT22();
 void reconnectMQTT();
+void processPendingActions();
 void callback(char* topic, byte* payload, unsigned int length);
